@@ -1,0 +1,105 @@
+---
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+
+stages:
+    - build
+    - test
+    - deploy
+
+variables:
+  GIT_STRATEGY: clone
+docker-build-prod:
+  # Use the official docker image.
+  image: docker:cli
+  stage: build
+  services:
+    - docker:dind
+  variables:
+    DOCKER_IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+
+  script:
+    - docker build --pull -t "$DOCKER_IMAGE_NAME" .
+    - docker push "$DOCKER_IMAGE_NAME"
+    - |
+      if [[ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]]; then
+        docker tag "$DOCKER_IMAGE_NAME" "$CI_REGISTRY_IMAGE:latest"
+        docker push "$CI_REGISTRY_IMAGE:latest"
+      fi
+  environment:
+    name: prod
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+docker-build-stage:
+  # Use the official docker image.
+  image: docker:cli
+  stage: build
+  services:
+    - docker:dind
+  variables:
+    DOCKER_IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+
+  script:
+    - docker build --pull -t "$DOCKER_IMAGE_NAME" .
+    - docker push "$DOCKER_IMAGE_NAME"
+    - |
+      if [[ "$CI_COMMIT_BRANCH" == "$CI_DEFAULT_BRANCH" ]]; then
+        docker tag "$DOCKER_IMAGE_NAME" "$CI_REGISTRY_IMAGE:latest"
+        docker push "$CI_REGISTRY_IMAGE:latest"
+      fi
+  environment:
+    name: stage  
+  rules:
+    - if: $CI_COMMIT_BRANCH != "main"
+
+deploy-prod:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache python3 # Installing Python3 for Jinja and
+    - apk add helm  # helm for deployment to K8
+    - apk add kubectl # kubectl for seting context
+    - apk update
+    - python3 -m venv .venv
+    - source .venv/bin/activate
+    - pip3 install j2cli
+    - pip3 install jinja2         # Installing Jinja
+  script:
+    - kubectl config set-cluster '${K8_CLUSTER_NAME}' --server=https://'${K8_API_SERVER}' --certificate-authority='${K8_CA_CERT}'
+    - kubectl config set-credentials '$K8_USER' --token='$K8_SA_TOKEN'
+    - kubectl config set-context prodcontext --cluster='$K8_CLUSTER_NAME' --user='$K8_USER'
+    - kubectl config use-context prodcontext
+    - j2 -o k8s/autodeploy/values.yaml k8s/autodeploy/values.yaml.j2  # Convert values.yaml.j2 to values.yaml using Jinja
+    - helm upgrade --install app ./ --namespace '$NAMESPACE' --values values.yaml
+  environment:
+    name: prod
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+deploy-stage:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache python3 # Installing Python3 for Jinja and
+    - apk add helm  # helm for deployment to K8
+    - apk add kubectl # kubectl for seting context
+    - apk update
+    - python3 -m venv .venv
+    - source .venv/bin/activate
+    - pip3 install j2cli
+    - pip3 install jinja2 # Installing Jinja
+  script:
+    - kubectl config set-cluster $K8_CLUSTER_NAME --server=https://$K8_API_SERVER --certificate-authority=$K8_CA_CERT
+    - kubectl config set-credentials $K8_USER --token=$K8_SA_TOKEN
+    - kubectl config set-context stagecontext --cluster=K8_CLUSTER_NAME --user=$K8_USER
+    - kubectl config use-context stagecontext
+    - j2 -o k8s/autodeploy/values.yaml k8s/autodeploy/values.yaml.j2  # Convert values.yaml.j2 to values.yaml using Jinja
+    - helm upgrade --install app ./ --namespace $NAMESPACE --values values.yaml
+  environment:
+    name: stage
+  rules:
+    - if: $CI_COMMIT_BRANCH != "main"

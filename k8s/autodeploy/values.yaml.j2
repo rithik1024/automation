@@ -1,0 +1,39 @@
+replicaCount: 1
+
+image:
+  repository: {{CI_REGISTRY_IMAGE}}:{{CI_COMMIT_REF_SLUG}}
+  pullPolicy: IfNotPresent
+  
+imagePullSecrets: gitlab-registry-secret
+
+service:
+  type: ClusterIP
+  port: 5000
+
+variables:
+  - name: SERVER_NAME
+    value: salarymanagement.cecl.com
+
+ingress:
+  enabled: true
+  hostname: salarymanagement.cecl.com
+
+
+resources:
+  limits:
+    cpu: "1"
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+registry: 
+  name: {{CI_REGISTRY}}
+  username: {{REGISTRY_USER}}
+  password: {{REGISTRY_PASS}}
